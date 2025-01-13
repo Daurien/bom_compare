@@ -27,19 +27,18 @@ def bom_excel_to_dictionary(filePath: str):
     # read the excel BOM file ignoring the first row and convert it to a numpy array
     with warnings.catch_warnings(action="ignore"):
         file_type = get_file_type(filePath)
+        columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type']
         if file_type == 'ORACLE':
             skip = find_table_origin_line_number(filePath)-1
             BOM = pd.read_excel(filePath, dtype={'Level': int, 'Item': str, 'Description': str,
-                                'Quantity': int, 'Supply Type': str}, skiprows=skip).to_numpy()
-            columns_to_find = ['Item name', 'Revision', 'Description', 'Quantity', 'SupplyType', 'Depth']
-            columns_to_keep = list(set(columns_to_find) & set(BOM.keys()))
+                                'Quantity': int, 'Supply Type': str}, skiprows=skip)
+            columns_to_keep = [element for element in columns_to_find if element in BOM.keys()]
             BOM = BOM[columns_to_keep].to_numpy()
         elif file_type == 'CREO':
-            skip = find_table_origin_line_number(filePath, 'BOM_CREO')-1
-            BOM = pd.read_excel(filePath, dtype={'Level': int, 'Item': str, 'Description': str,
-                                'Quantity': int, 'Supply Type': str}, skiprows=skip).to_numpy()
-            columns_to_find = ['Item name', 'Revision', 'Description', 'Quantity', 'SupplyType', 'Depth']
-            columns_to_keep = list(set(columns_to_find) & set(BOM.keys()))
+            skip = find_table_origin_line_number(filePath, 'Import_Creo')-1
+            BOM = pd.read_excel(filePath, sheet_name='Import_Creo', dtype={'Level': int, 'Item': str, 'Description': str,
+                                'Quantity': int, 'Supply Type': str}, skiprows=skip)
+            columns_to_keep = [element for element in columns_to_find if element in BOM.keys()]
             BOM = BOM[columns_to_keep].to_numpy()
 
     # # unnify dat format to string
@@ -54,8 +53,6 @@ def bom_excel_to_dictionary(filePath: str):
     # BOM = np.delete(BOM, [max_depth+6], 1)
     # BOM = np.delete(BOM, np.s_[max_depth+7:], 1)
 
-    print(BOM[0])
-
     contents = []
     prev_contents = []
     current_content = []
@@ -68,7 +65,7 @@ def bom_excel_to_dictionary(filePath: str):
             for row in range(bom_length):
                 if BOM[row, 0] == col:
                     reading = True
-                    current_content.append(append_row(max_depth, BOM[row]))
+                    current_content.append(append_row(BOM[row]))
 
                 if row == last_row or reading:
                     reading = False
@@ -85,11 +82,11 @@ def bom_excel_to_dictionary(filePath: str):
                     reading = True
                     try:
                         if BOM[row+1, 0] == col+1:  # if current row contains sub-level items
-                            current_content.append(append_row(max_depth, BOM[row], prev_contents.pop(0)))
+                            current_content.append(append_row(BOM[row], prev_contents.pop(0)))
                         else:  # if current does not contains sub-level items
-                            current_content.append(append_row(max_depth, BOM[row]))
+                            current_content.append(append_row(BOM[row]))
                     except IndexError:  # if we are reading last row
-                        current_content.append(append_row(max_depth, BOM[row]))
+                        current_content.append(append_row(BOM[row]))
 
                 if row == last_row or (reading and BOM[row, 0] < col):
                     reading = False
@@ -105,11 +102,11 @@ def bom_excel_to_dictionary(filePath: str):
                 if BOM[row, 0] == col and row != last_row:
                     try:
                         if BOM[row+1, 0] == col+1:  # if current row contains sub-level items
-                            current_content.append(append_row(max_depth, BOM[row], prev_contents.pop(0)))
+                            current_content.append(append_row(BOM[row], prev_contents.pop(0)))
                         else:  # if current does not contains sub-level items
-                            current_content.append(append_row(max_depth, BOM[row]))
+                            current_content.append(append_row(BOM[row]))
                     except IndexError:  # if we are reading last row
-                        current_content.append(append_row(max_depth, BOM[row]))
+                        current_content.append(append_row(BOM[row]))
 
                 elif row == last_row:
                     final_bom = array_to_dict(current_content)
@@ -122,7 +119,7 @@ def get_file_type(filePath: str):
     workbook = openpyxl.load_workbook(filePath)
     sheet_names = workbook.sheetnames
 
-    if 'BOM_GLOBAL' in sheet_names and 'BOM_CREO' in sheet_names:
+    if 'Bom' in sheet_names and 'Import_Creo' in sheet_names:
         return 'CREO'
     else:
         return 'ORACLE'
@@ -156,10 +153,10 @@ def find_table_origin_line_number(file_path, sheet_name=None):
     return None
 
 
-def append_row(max_depth, row, content=[]):
+def append_row(row, content=[]):
 
     # search pattern like '*_02' in name to extract revision
-    item_name = str(row[max_depth+1])
+    item_name = str(row[2])
     pattern = r'_(\d{2})$'
     match = re.search(pattern, item_name)
     if match:
@@ -171,10 +168,10 @@ def append_row(max_depth, row, content=[]):
     result = {
         'Item name': item_name,
         'Revision': revision,
-        'Description': row[max_depth+2],
-        'Quantity': row[max_depth+4],
-        'FromDate': row[max_depth+5],
-        'SupplyType': row[max_depth+6],
+        'Description': row[2],
+        'Quantity': row[3],
+        # 'FromDate': row[max_depth+5],
+        'SupplyType': row[4],
         'Depth': row[0]
     }
 
@@ -209,7 +206,7 @@ def append_to_dict(keys: list, bom_content: dict, modify_type: str, initial_dict
             else:
                 mf = [{'type': f'Item {modify_type['type']} inside'}]
             content = {'Description':  content['Description'], 'Revision': content['Revision'],
-                       'Quantity':  content['Quantity'], 'FromDate':  content['FromDate'], 'SupplyType':  content['SupplyType'], 'ModifyType': mf}
+                       'Quantity':  content['Quantity'], 'SupplyType':  content['SupplyType'], 'ModifyType': mf}
             current_level[key] = {'content': content}
         else:
             if i == len(keys) - 1:
@@ -384,8 +381,6 @@ def compare_bom(path1: str, path2: str):
     diff = DeepDiff(bom1, bom2, threshold_to_diff_deeper=0)
     max_depth = max(m1, m2)
 
-    pprint.pprint(diff)
-
     item_added = [re.findall(r'\[\'(.*?)\'\]', element.replace('[\'content\']', "").replace("root", ""))
                   for element in diff.get('dictionary_item_added', [])]
     item_removed = [re.findall(r'\[\'(.*?)\'\]', element.replace('[\'content\']', "").replace("root", ""))
@@ -394,11 +389,6 @@ def compare_bom(path1: str, path2: str):
                     for element in diff.get('values_changed', [])]
 
     output = {}
-
-    print(item_added)
-    print(item_removed)
-    # print(item_changed)
-    # print(diff)
 
     for item in item_added:
         output = append_to_dict(item, bom2, {'type': 'ADDED'})
@@ -411,7 +401,7 @@ def compare_bom(path1: str, path2: str):
 
     table_output = dict_to_table(output, max_depth)
     columns = ['Level', *[str(i) for i in range(1, max_depth+1)], 'Item', 'Description', 'Revision',
-               'Quantity', 'FromDate', 'SupplyType', 'ModifyType']
+               'Quantity', 'SupplyType', 'ModifyType']
 
     output_df = pd.DataFrame(table_output, columns=columns)
 
@@ -429,27 +419,37 @@ def check_file(file_path):
 
 ##################################################### WORKING CODE #################################################
 
-# # Create the parser
-# parser = argparse.ArgumentParser(description="A script compare two BOM document with stardard format")
+# Create the parser
+parser = argparse.ArgumentParser(description="A script compare two BOM document with stardard format")
 
-# # Add arguments with help descriptions
-# parser.add_argument('--bom1', type=str, required=True, help='Path to the first bom')
-# parser.add_argument('--bom2', type=str, required=True, help='Path to the second bom')
+# Add arguments with help descriptions
+parser.add_argument('--bom1', type=str, required=True, help='Path to the first bom')
+parser.add_argument('--bom2', type=str, required=True, help='Path to the second bom')
 
-# # Parse the arguments
-# args = parser.parse_args()
+# Parse the arguments
+args = parser.parse_args()
 
-# # Check the files
-# check_file(args.bom1)
-# check_file(args.bom2)
+# Check the files
+check_file(args.bom1)
+check_file(args.bom2)
 
-# compare_bom(args.bom1, args.bom2)
-# compare_bom('C:/Users/SESA787052/Downloads/0M-3402007000.xlsx', "C:/Users/SESA787052/Downloads/QBVE94603.xlsx")
+compare_bom(args.bom1, args.bom2)
+
+
+# filePath = 'C:/Users/SESA787052/Downloads/BOM QPBE44026-15 Design to Manufacturing1.xlsx'
+# filePath2 = 'C:/Users/SESA787052/Downloads/BOM QPBE44026-15 Design to Manufacturing2.xlsx'
+# compare_bom(filePath, filePath2)
+# print(get_file_type(filePath))
+# skip = find_table_origin_line_number(filePath, 'Import_Creo')-1
+# print(skip)
 # compare_bom('C:/Users/SESA787052/Documents/BOM_compare/BOM DESIGN QSMA11485_01.xlsx',
 #             "C:/Users/SESA787052/Documents/BOM_compare/BOM DESIGN QSMA11485_02.xlsx")
 # print(bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/QBVE94603.xlsx'))
-bom, _ = bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/0M-3402007000.xlsx')
-bom2, _ = bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/QBVE94603.xlsx')
-print(bom2['34413004'].keys())
+# bom, _ = bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/0M-3402007000.xlsx')
+# bom, _ = bom_excel_to_dictionary(filePath)
+# pprint.pprint(bom)
+# bom2, _ = bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/QBVE94603.xlsx')
+
+# print(bom2['34413004'].keys())
 # print(bom2)
 # compare_bom(bom, bom2)
