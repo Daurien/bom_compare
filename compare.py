@@ -23,11 +23,19 @@ from openpyxl.packaging.custom import (
 
 
 def bom_excel_to_dictionary(filePath: str):
+    """
+    Convert a BOM Excel file to a dictionary.
 
+    Args:
+        path (str): The file path to the BOM Excel file.
+
+    Returns:
+        tuple: A tuple containing the BOM dictionary and metadata.
+    """
     # read the excel BOM file ignoring the first row and convert it to a numpy array
     with warnings.catch_warnings(action="ignore"):
         file_type = get_file_type(filePath)
-        columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type']
+        columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type', 'SE_REVISION']
         if file_type == 'ORACLE':
             skip = find_table_origin_line_number(filePath)-1
             BOM = pd.read_excel(filePath, dtype={'Level': int, 'Item': str, 'Description': str,
@@ -159,11 +167,15 @@ def append_row(row, content=[]):
     item_name = str(row[2])
     pattern = r'_(\d{2})$'
     match = re.search(pattern, item_name)
-    if match:
-        revision = match.group(1)
-        item_name = item_name[:-3]
+    print(row)
+    if len(row) == 6:
+        revision = row[5]
     else:
-        revision = 'xx'
+        if match:
+            revision = match.group(1)
+            item_name = item_name[:-3]
+        else:
+            revision = 'xx'
 
     result = {
         'Item name': item_name,
@@ -375,6 +387,16 @@ def save_df_to_excel(result: pd.DataFrame, max_depth: int):
 
 
 def compare_bom(path1: str, path2: str):
+    """
+    Compare two Bill of Materials (BOM) Excel files.
+
+    Args:
+        path1 (str): The file path to the first BOM Excel file.
+        path2 (str): The file path to the second BOM Excel file.
+
+    Returns:
+        None
+    """
     bom1, m1 = bom_excel_to_dictionary(path1)
     bom2, m2 = bom_excel_to_dictionary(path2)
 
@@ -428,6 +450,9 @@ parser.add_argument('--bom2', type=str, required=True, help='Path to the second 
 
 # Parse the arguments
 args = parser.parse_args()
+
+print(args.bom1)
+print(args.bom2)
 
 # Check the files
 check_file(args.bom1)
