@@ -168,7 +168,6 @@ def append_row(row, content=[]):
     item_name = str(row[1])
     pattern = r'_(\d{2})$'
     match = re.search(pattern, item_name)
-
     if len(row) == 6:
         revision = row[5]
     else:
