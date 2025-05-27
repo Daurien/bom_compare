@@ -1,25 +1,69 @@
-import os
-import pprint
-from deepdiff import DeepDiff
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import warnings
-import re
-import openpyxl
 import argparse
-from openpyxl import Workbook
+import os
+from pprint import pprint
+import re
+import warnings
+# import pandas as pd
+from pandas import DataFrame
+from pandas.io.excel import read_excel as pd_read_excel
+from deepdiff import DeepDiff
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill, Border, Side, Alignment
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.comments import Comment
-from openpyxl.packaging.custom import (
-    BoolProperty,
-    DateTimeProperty,
-    StringProperty,
-    CustomPropertyList,
-    IntProperty
-)
+from openpyxl.packaging.custom import BoolProperty, DateTimeProperty, StringProperty, CustomPropertyList, IntProperty
+import shutil
+import os
+import pandas as pd
+from openpyxl import load_workbook
+import warnings
+from numpy import ndarray
+
+
+def read_bom_to_numpy(filePath: str) -> ndarray:
+    """
+    Reads an Excel file (ORACLE or CREO type) and returns specified BOM columns as a NumPy array.
+
+    Args:
+        filePath (str): Path to the Excel file
+
+    Returns:
+        np.ndarray: Array containing BOM data with selected columns
+    """
+    columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type', 'SE_REVISION']
+    dtypes = {'Level': int, 'Item': str, 'Description': str, 'Quantity': int, 'Supply Type': str}
+
+    # Determine file type
+    workbook = load_workbook(filePath, read_only=True)
+    file_type = 'CREO' if 'Bom' in workbook.sheetnames and 'Import_Creo' in workbook.sheetnames else 'ORACLE'
+    workbook.close()
+
+    # Find table origin
+    workbook = load_workbook(filePath)
+    sheet_name = 'Import_Creo' if file_type == 'CREO' else None
+    worksheet = workbook[sheet_name] if sheet_name else workbook.active
+
+    skip = None
+    for table in worksheet.tables.values():
+        origin_cell = table.ref.split(':')[0]
+        skip = int(''.join(filter(str.isdigit, origin_cell))) - 1
+        break
+
+    workbook.close()
+
+    if skip is None:
+        raise ValueError("No table found in the Excel file")
+
+    # Read and process BOM
+    with warnings.catch_warnings(action="ignore"):
+        if file_type == 'CREO':
+            BOM = pd.read_excel(filePath, sheet_name='Import_Creo', dtype=dtypes, skiprows=skip)
+        else:
+            BOM = pd.read_excel(filePath, dtype=dtypes, skiprows=skip)
+
+        columns_to_keep = [col for col in columns_to_find if col in BOM.columns]
+        return BOM[columns_to_keep].to_numpy()
 
 
 def bom_excel_to_dictionary(filePath: str):
@@ -33,21 +77,22 @@ def bom_excel_to_dictionary(filePath: str):
         tuple: A tuple containing the BOM dictionary and metadata.
     """
     # read the excel BOM file ignoring the first row and convert it to a numpy array
-    with warnings.catch_warnings(action="ignore"):
-        file_type = get_file_type(filePath)
-        columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type', 'SE_REVISION']
-        if file_type == 'ORACLE':
-            skip = find_table_origin_line_number(filePath)-1
-            BOM = pd.read_excel(filePath, dtype={'Level': int, 'Item': str, 'Description': str,
-                                'Quantity': int, 'Supply Type': str}, skiprows=skip)
-            columns_to_keep = [element for element in columns_to_find if element in BOM.keys()]
-            BOM = BOM[columns_to_keep].to_numpy()
-        elif file_type == 'CREO':
-            skip = find_table_origin_line_number(filePath, 'Import_Creo')-1
-            BOM = pd.read_excel(filePath, sheet_name='Import_Creo', dtype={'Level': int, 'Item': str, 'Description': str,
-                                'Quantity': int, 'Supply Type': str}, skiprows=skip)
-            columns_to_keep = [element for element in columns_to_find if element in BOM.keys()]
-            BOM = BOM[columns_to_keep].to_numpy()
+    # with warnings.catch_warnings(action="ignore"):
+    #     file_type = get_file_type(filePath)
+    #     columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type', 'SE_REVISION']
+    #     if file_type == 'ORACLE':
+    #         skip = find_table_origin_line_number(filePath)-1
+    #         BOM = pd_read_excel(filePath, dtype={'Level': int, 'Item': str, 'Description': str,
+    #                             'Quantity': int, 'Supply Type': str}, skiprows=skip)
+    #         columns_to_keep = [element for element in columns_to_find if element in BOM.keys()]
+    #         BOM = BOM[columns_to_keep].to_numpy()
+    #     elif file_type == 'CREO':
+    #         skip = find_table_origin_line_number(filePath, 'Import_Creo')-1
+    #         BOM = pd_read_excel(filePath, sheet_name='Import_Creo', dtype={'Level': int, 'Item': str, 'Description': str,
+    #                             'Quantity': int, 'Supply Type': str}, skiprows=skip)
+    #         columns_to_keep = [element for element in columns_to_find if element in BOM.keys()]
+    #         BOM = BOM[columns_to_keep].to_numpy()
+    BOM = read_bom_to_numpy(filePath)
 
     # # unnify dat format to string
     # for row in BOM:
@@ -117,7 +162,6 @@ def bom_excel_to_dictionary(filePath: str):
                         current_content.append(append_row(BOM[row]))
 
                 elif row == last_row:
-                    print("FINAL BOM :", current_content)
                     final_bom = array_to_dict(current_content)
                     # final_bom = {'BOM''Item name': 'QSMA', 'content': array_to_dict(current_content)}
 
@@ -125,7 +169,7 @@ def bom_excel_to_dictionary(filePath: str):
 
 
 def get_file_type(filePath: str):
-    workbook = openpyxl.load_workbook(filePath)
+    workbook = load_workbook(filePath, read_only=True)
     sheet_names = workbook.sheetnames
 
     if 'Bom' in sheet_names and 'Import_Creo' in sheet_names:
@@ -145,7 +189,7 @@ def array_to_dict(array):
 
 def find_table_origin_line_number(file_path, sheet_name=None):
     # Load the workbook and select the active worksheet
-    workbook = openpyxl.load_workbook(file_path)
+    workbook = load_workbook(file_path)
     if sheet_name:
         worksheet = workbook[sheet_name]
     else:
@@ -168,6 +212,7 @@ def append_row(row, content=[]):
     item_name = str(row[1])
     pattern = r'_(\d{2})$'
     match = re.search(pattern, item_name)
+
     if len(row) == 6:
         revision = row[5]
     else:
@@ -271,7 +316,7 @@ def get_content(bom: dict, keys: list):
     return current_level
 
 
-def save_df_to_excel(result: pd.DataFrame, max_depth: int):
+def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str):
 
     # Create a workbook and select the active worksheet
     wb = Workbook()
@@ -382,11 +427,11 @@ def save_df_to_excel(result: pd.DataFrame, max_depth: int):
     wb.custom_doc_props = props
 
     # Save the workbook
-    wb.save("output_colored.xlsx")
-    os.startfile("output_colored.xlsx")
+    wb.save(output_path)
+    os.startfile(output_path)
 
 
-def compare_bom(path1: str, path2: str):
+def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare_result.xlsx"):
     """
     Compare two Bill of Materials (BOM) Excel files.
 
@@ -399,9 +444,6 @@ def compare_bom(path1: str, path2: str):
     """
     bom1, m1 = bom_excel_to_dictionary(path1)
     bom2, m2 = bom_excel_to_dictionary(path2)
-
-    pprint.pprint(bom1)
-    pprint.pprint(bom2)
 
     diff = DeepDiff(bom1, bom2, threshold_to_diff_deeper=0)
     max_depth = max(m1, m2)
@@ -428,9 +470,13 @@ def compare_bom(path1: str, path2: str):
     columns = ['Level', *[str(i) for i in range(1, max_depth+1)], 'Item', 'Description', 'Revision',
                'Quantity', 'SupplyType', 'ModifyType']
 
-    output_df = pd.DataFrame(table_output, columns=columns)
+    output_df = DataFrame(table_output, columns=columns)
 
-    save_df_to_excel(output_df, max_depth)
+    if item_added or item_changed or item_removed:
+        save_df_to_excel(output_df, max_depth, output_path)
+        return True
+    else:
+        return False
 
 # Function to check if a file exists
 
@@ -444,24 +490,24 @@ def check_file(file_path):
 
 ##################################################### WORKING CODE #################################################
 
-# Create the parser
-parser = argparse.ArgumentParser(description="A script compare two BOM document with stardard format")
+# # Create the parser
+# parser = argparse.ArgumentParser(description="A script compare two BOM document with stardard format")
 
-# Add arguments with help descriptions
-parser.add_argument('--bom1', type=str, required=True, help='Path to the first bom')
-parser.add_argument('--bom2', type=str, required=True, help='Path to the second bom')
+# # Add arguments with help descriptions
+# parser.add_argument('--bom1', type=str, required=True, help='Path to the first bom')
+# parser.add_argument('--bom2', type=str, required=True, help='Path to the second bom')
 
-# Parse the arguments
-args = parser.parse_args()
+# # Parse the arguments
+# args = parser.parse_args()
 
-print(args.bom1)
-print(args.bom2)
+# print(args.bom1)
+# print(args.bom2)
 
-# Check the files
-check_file(args.bom1)
-check_file(args.bom2)
+# # Check the files
+# check_file(args.bom1)
+# check_file(args.bom2)
 
-compare_bom(args.bom1, args.bom2)
+# compare_bom(args.bom1, args.bom2)
 
 
 # filePath = 'C:/Users/SESA787052/Downloads/BOM QPBE44026-15 Design to Manufacturing1.xlsx'

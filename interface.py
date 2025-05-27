@@ -1,0 +1,215 @@
+import os
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from compare import compare_bom
+import tkinter.messagebox as messagebox
+import os
+from pandas import read_excel
+from openpyxl.utils.exceptions import InvalidFileException
+
+
+def check_bom_comparison(file_1: str, file_2: str, destination_file: str) -> bool:
+    """
+    Compares two BOM files and handles potential errors with appropriate message boxes.
+
+    Args:
+        file_1 (str): Path to first BOM file
+        file_2 (str): Path to second BOM file
+        destination_file (str): Path to destination file
+
+    Returns:
+        bool: True if comparison was successful and BOMs differ, False if identical or error occurred
+
+    Raises:
+        None: All errors are caught and handled with message boxes
+    """
+    try:
+        # Verify file existence
+        if not os.path.isfile(file_1):
+            messagebox.showerror("File Error", f"First BOM file not found: {file_1}")
+            return False
+        if not os.path.isfile(file_2):
+            messagebox.showerror("File Error", f"Second BOM file not found: {file_2}")
+            return False
+
+        # Verify output path is writable
+        try:
+            output_dir = os.path.dirname(destination_file)
+            if output_dir and not os.access(output_dir, os.W_OK):
+                messagebox.showerror("Permission Error", f"No write permission for output directory: {output_dir}")
+                return False
+        except OSError as e:
+            messagebox.showerror("Path Error", f"Invalid output path: {str(e)}")
+            return False
+
+        # Attempt BOM comparison
+        try:
+            if not compare_bom(file_1, file_2, destination_file):
+                messagebox.showinfo("Same BOMs", "BOM files are identical")
+                return False
+            return True
+
+        except PermissionError as e:
+            messagebox.showerror("Permission Error", f"Permission denied accessing files: {str(e)}")
+            return False
+        except ValueError as e:
+            messagebox.showerror("Data Error", f"Invalid BOM structure: {str(e)}")
+            return False
+        except KeyError as e:
+            messagebox.showerror("Data Error", f"Missing required column: {str(e)}")
+            return False
+        except InvalidFileException as e:
+            messagebox.showerror("File Error", f"Invalid Excel file format: {str(e)}")
+            return False
+        except read_excel.exceptions.ReadError as e:
+            messagebox.showerror("File Error", f"Error reading Excel file: {str(e)}")
+            return False
+        except Exception as e:
+            messagebox.showerror("Error", f"Unexpected error during BOM comparison: {str(e)}")
+            return False
+
+    except Exception as e:
+        messagebox.showerror("Critical Error", f"Failed to initialize comparison: {str(e)}")
+        return False
+
+
+def profile_startup():
+    # Your existing code
+    def browse_file_1():
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")])
+        entry_file_1.delete(0, tk.END)
+        entry_file_1.insert(0, file_path)
+
+    def browse_file_2():
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")])
+        entry_file_2.delete(0, tk.END)
+        entry_file_2.insert(0, file_path)
+
+    def browse_destination():
+        file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx;*.xls")])
+        entry_file.delete(0, tk.END)
+        entry_file.insert(0, file_path)
+
+    def browse_file():
+        file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx;*.xls")])
+        entry_file.delete(0, tk.END)
+        entry_file.insert(0, file_path)
+
+    def compare_files():
+        """
+        Compares two BOM files from GUI inputs and handles potential errors with message boxes.
+
+        Returns:
+            bool: True if comparison was successful and BOMs differ, False if identical or error occurred
+        """
+        try:
+            file_1 = entry_file_1.get()
+            file_2 = entry_file_2.get()
+            destination_file = entry_file.get()
+
+            # Validate input fields
+            if not file_1 or not file_2 or not destination_file:
+                messagebox.showwarning("Warning", "All fields must be filled.")
+                return False
+
+            # Validate file extensions
+            if not (file_1.endswith(".xlsx") or file_1.endswith(".xls")):
+                messagebox.showwarning("Warning", "File 1 must be a valid Excel file.")
+                return False
+            if not (file_2.endswith(".xlsx") or file_2.endswith(".xls")):
+                messagebox.showwarning("Warning", "File 2 must be a valid Excel file.")
+                return False
+            if not (destination_file.endswith(".xlsx") or destination_file.endswith(".xls")):
+                messagebox.showwarning("Warning", "Destination File must be a valid Excel file.")
+                return False
+
+            # Verify file existence
+            if not os.path.isfile(file_1):
+                messagebox.showerror("File Error", f"First BOM file not found: {file_1}")
+                return False
+            if not os.path.isfile(file_2):
+                messagebox.showerror("File Error", f"Second BOM file not found: {file_2}")
+                return False
+
+            # Verify output path is writable
+            try:
+                output_dir = os.path.dirname(destination_file)
+                if output_dir and not os.access(output_dir, os.W_OK):
+                    messagebox.showerror("Permission Error", f"No write permission for output directory: {output_dir}")
+                    return False
+            except OSError as e:
+                messagebox.showerror("Path Error", f"Invalid output path: {str(e)}")
+                return False
+
+            # Attempt BOM comparison
+            try:
+                if not compare_bom(file_1, file_2, destination_file):
+                    messagebox.showinfo("Same BOMs", "BOM files are identical")
+                    return False
+                return True
+
+            except PermissionError as e:
+                messagebox.showerror(
+                    "Permission Error", f"Please close compared files before trying again \n\n {str(e)}")
+                return False
+            except ValueError as e:
+                messagebox.showerror("Data Error", f"Invalid BOM structure: \n \n {str(e)}")
+                return False
+            except KeyError as e:
+                messagebox.showerror("Data Error", f"Missing required column: \n \n {str(e)}")
+                return False
+            except InvalidFileException as e:
+                messagebox.showerror("File Error", f"Invalid Excel file format: \n \n {str(e)}")
+                return False
+            except read_excel.exceptions.ReadError as e:
+                messagebox.showerror("File Error", f"Error reading Excel file: \n \n {str(e)}")
+                return False
+            except Exception as e:
+                messagebox.showerror("Error", f"Unexpected error during BOM comparison: \n \n {str(e)}")
+                return False
+
+        except Exception as e:
+            messagebox.showerror("Critical Error", f"Failed to initialize comparison: \n \n {str(e)}")
+            return False
+
+    def quit_app():
+        root.destroy()
+
+    root = tk.Tk()
+    root.title("BOM Compare")
+
+    label_file_1 = tk.Label(root, text="File 1:")
+    label_file_1.grid(row=0, column=0, padx=10, pady=10)
+    entry_file_1 = tk.Entry(root, width=50)
+    entry_file_1.grid(row=0, column=1, padx=10, pady=10)
+    # entry_file_1.insert(0, "C:/OneDrive - Schneider Electric/Documents - MBT Plant - Gestion affaires - Métiers Group/Affaires/2025/706585418/GVXLIOCQ-QONE01250-00/Prod/03-PVZ, Schéma Elec, Specif et BOM/Spécifications/BOM QONE01250.xlsx")
+    button_browse_file_1 = tk.Button(root, text="Browse", command=browse_file_1)
+    button_browse_file_1.grid(row=0, column=2, padx=10, pady=10)
+
+    label_file_2 = tk.Label(root, text="File 2:")
+    label_file_2.grid(row=1, column=0, padx=10, pady=10)
+    entry_file_2 = tk.Entry(root, width=50)
+    entry_file_2.grid(row=1, column=1, padx=10, pady=10)
+    # entry_file_2.insert(0, "C:/OneDrive - Schneider Electric/Documents - MBT Plant - Gestion affaires - Métiers Group/Affaires/2025/706585418/GVXLIOCQ-QONE01250-00/Prod/03-PVZ, Schéma Elec, Specif et BOM/Spécifications/BOM QONE01250_REV02.xlsx")
+    button_browse_file_2 = tk.Button(root, text="Browse", command=browse_file_2)
+    button_browse_file_2.grid(row=1, column=2, padx=10, pady=10)
+
+    label_file = tk.Label(root, text="Destination File:")
+    label_file.grid(row=2, column=0, padx=10, pady=10)
+    default_path = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare_result.xlsx"
+    entry_file = tk.Entry(root, width=50)
+    entry_file.insert(0, default_path)
+    entry_file.grid(row=2, column=1, padx=10, pady=10)
+    button_browse_file = tk.Button(root, text="Browse", command=browse_file)
+    button_browse_file.grid(row=2, column=2, padx=10, pady=10)
+
+    button_compare = tk.Button(root, text="Compare", command=compare_files)
+    button_compare.grid(row=3, column=0, columnspan=3, padx=10, pady=10)
+    button_quit = tk.Button(root, text="Quit", command=quit_app)
+    button_quit.grid(row=4, column=0, columnspan=3, padx=10, pady=10)
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    profile_startup()
