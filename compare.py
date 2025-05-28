@@ -168,6 +168,72 @@ def bom_excel_to_dictionary(filePath: str):
     return final_bom, max_depth
 
 
+def light_bom_excel_to_dictionary(filePath: str):
+    """Compare two BOM from 'BOM' sheet of Creo extraceted Excel file and return a simplified BOM dictionary.
+
+    Args:
+        filePath (str): file to read (from Creo only)
+
+    Raises:
+        ValueError: If pivot table 'BOmOracle' is not found in the workbook.
+
+    Returns:
+        dict: bom transformed as a dictionary with 'Item name' as keys and other attributes as values.
+    """
+    warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+    # Load the workbook and select the sheet
+    wb = load_workbook(filePath, data_only=True)
+    try:
+        ws = wb['Bom']
+    except KeyError:
+        raise ValueError("Sheet 'BOM' not found in the workbook.")
+
+    # Find the PivotTable named 'BomOracle'
+    pivot = None
+    for pt in ws._pivots:
+        if pt.name == 'BomOracle':
+            pivot = pt
+            break
+
+    if pivot is None:
+        raise ValueError("PivotTable 'BomOracle' not found.")
+
+    # Get the pivot table's displayed range (where it is rendered in the sheet)
+    pivot_display_range = pivot.location.ref
+
+    # Extract the displayed data from the range
+    data = []
+    for row in ws[pivot_display_range]:
+        data.append([cell.value for cell in row])
+
+    # Convert to pandas DataFrame
+    df = pd.DataFrame(data[1:], columns=data[0])
+    df = df[df['Item'].notna()].reset_index(drop=True)
+
+    # Remove suffix pattern from 'Item' column
+    df['Item'] = df['Item'].str.replace(r'_\d{2}$', '', regex=True)
+
+    # Rename columns
+    df = df.rename(columns={'Supplier_Type': 'SupplyType', 'Item': 'Item name',
+                   'SE_REVISION': 'Revision', 'Qty': 'Quantity'})
+
+    # Keep only columns that are different from the original and not unchanged
+    unchanged_cols = set(df.columns) - set(['SupplyType', 'Item name', 'Revision', 'Quantity', 'Description'])
+    df = df[['SupplyType', 'Item name', 'Revision', 'Quantity', 'Description']]
+
+    # Add 'Depth' column full of 1
+    df['Depth'] = 1
+
+    light_bom = {}
+
+    for _, row in df.iterrows():
+        item = row['Item name']
+        light_bom[item] = row.to_dict()
+
+    return light_bom
+
+
 def get_file_type(filePath: str):
     workbook = load_workbook(filePath, read_only=True)
     sheet_names = workbook.sheetnames
@@ -206,21 +272,20 @@ def find_table_origin_line_number(file_path, sheet_name=None):
     return None
 
 
-def append_row(row, content=[]):
+def append_row(row, content=None):
 
     # search pattern like '*_02' in name to extract revision
     item_name = str(row[1])
     pattern = r'_(\d{2})$'
     match = re.search(pattern, item_name)
 
-    if len(row) == 6:
+    if match:
+        revision = match.group(1)
+        item_name = item_name[:-3]
+    elif len(row) == 6:
         revision = row[5]
     else:
-        if match:
-            revision = match.group(1)
-            item_name = item_name[:-3]
-        else:
-            revision = 'xx'
+        revision = 'xx'
 
     result = {
         'Item name': item_name,
@@ -238,12 +303,12 @@ def append_row(row, content=[]):
     return result
 
 
-def append_to_dict(keys: list, bom_content: dict, modify_type: str, initial_dict: dict = {}):
+def append_to_dict(keys: list, bom_content: dict, modify_type: str, initial_dict: dict = None):
     """_summary_
 
     Args:
-        keys (list): list of key string ['34410718','34410662','34411697']
-        bom_content (dict): nom generated with bom_excel_to_dictionary
+        keys (list): list of key string EX :  ['34410718','34410662','34411697'] that represent the 'path' to the final level of '34411697' (subcomponent of '34410662' (subcomponent of...))
+        bom_content (dict): Bom generated with bom_excel_to_dictionary
         modify_type (dict): {'type' : 'ADDED'}, {'type' : 'REMOVED'} or {'type' : 'CHANGED', value_changed:'Revision' 'new_value': '03', 'old_value': '02'}
         initial_dict (dict, optional): _description_. Defaults to {}.
 
@@ -252,19 +317,26 @@ def append_to_dict(keys: list, bom_content: dict, modify_type: str, initial_dict
     """
 
     # Initialize a variable to hold the current level of the dictionary
+    if initial_dict is None:
+        initial_dict = {}
+
     current_level = initial_dict
 
     # Iterate through the keys to create the nested structure
     for i, key in enumerate(keys):
         if key not in current_level:
-            content = get_content(bom_content, keys[:i+1])
+            # In this case, this specific key does not exist in the current level of the dictionary and should be created
+            content = get_content(bom_content, keys[:i+1])  # get content of current item from full BOM
             if i == len(keys) - 1:
+                # If we are at the last key, we can directly assign the modify_type
                 mf = [modify_type]
             else:
+                # If we are not at the last key, it means we are creating the subassembly that contains the modified item
                 mf = [{'type': f'Item {modify_type['type']} inside'}]
-            content = {'Description':  content['Description'], 'Revision': content['Revision'],
-                       'Quantity':  content['Quantity'], 'SupplyType':  content['SupplyType'], 'ModifyType': mf}
-            current_level[key] = {'content': content}
+            simplified_content = {'Description':  content['Description'], 'Revision': content['Revision'],
+                                  'Quantity':  content['Quantity'], 'SupplyType':  content['SupplyType'], 'ModifyType': mf}
+
+            current_level[key] = {'content': simplified_content}
         else:
             if i == len(keys) - 1:
                 if modify_type not in current_level[key]['content']['ModifyType']:
@@ -316,7 +388,7 @@ def get_content(bom: dict, keys: list):
     return current_level
 
 
-def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str):
+def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_file=True):
 
     # Create a workbook and select the active worksheet
     wb = Workbook()
@@ -427,11 +499,16 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str):
     wb.custom_doc_props = props
 
     # Save the workbook
-    wb.save(output_path)
-    os.startfile(output_path)
+    try:
+        wb.save(output_path)
+        if open_file:
+            os.startfile(output_path)
+    except PermissionError:
+        print(f"Error: Cannot save file - {output_path} is already open. Please close it and try again.")
+        return
 
 
-def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare_result.xlsx"):
+def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare_result.xlsx", open_result=True, simple_bom_mode=False):
     """
     Compare two Bill of Materials (BOM) Excel files.
 
@@ -442,11 +519,16 @@ def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getl
     Returns:
         None
     """
-    bom1, m1 = bom_excel_to_dictionary(path1)
-    bom2, m2 = bom_excel_to_dictionary(path2)
+    if not simple_bom_mode:
+        bom1, m1 = bom_excel_to_dictionary(path1)
+        bom2, m2 = bom_excel_to_dictionary(path2)
+        max_depth = max(m1, m2)
+    else:
+        bom1 = light_bom_excel_to_dictionary(path1)
+        bom2 = light_bom_excel_to_dictionary(path2)
+        max_depth = 1
 
     diff = DeepDiff(bom1, bom2, threshold_to_diff_deeper=0)
-    max_depth = max(m1, m2)
 
     item_added = [re.findall(r'\[\'(.*?)\'\]', element.replace('[\'content\']', "").replace("root", ""))
                   for element in diff.get('dictionary_item_added', [])]
@@ -458,13 +540,14 @@ def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getl
     output = {}
 
     for item in item_added:
-        output = append_to_dict(item, bom2, {'type': 'ADDED'})
+        output = append_to_dict(item, bom2, {'type': 'ADDED'}, output)
 
     for item in item_removed:
-        output = append_to_dict(item, bom1, {'type': 'REMOVED'})
+        output = append_to_dict(item, bom1, {'type': 'REMOVED'}, output)
 
     for item in item_changed:
-        output = append_to_dict(item[0][:-1], bom1, {'type': 'CHANGED', 'changed_value': item[0][-1], **item[1]})
+        output = append_to_dict(item[0][:-1], bom1, {'type': 'CHANGED',
+                                'changed_value': item[0][-1], **item[1]}, output)
 
     table_output = dict_to_table(output, max_depth)
     columns = ['Level', *[str(i) for i in range(1, max_depth+1)], 'Item', 'Description', 'Revision',
@@ -473,7 +556,7 @@ def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getl
     output_df = DataFrame(table_output, columns=columns)
 
     if item_added or item_changed or item_removed:
-        save_df_to_excel(output_df, max_depth, output_path)
+        save_df_to_excel(output_df, max_depth, output_path, open_file=open_result)
         return True
     else:
         return False

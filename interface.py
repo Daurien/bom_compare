@@ -90,12 +90,7 @@ def profile_startup():
         entry_file.delete(0, tk.END)
         entry_file.insert(0, file_path)
 
-    def browse_file():
-        file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx;*.xls")])
-        entry_file.delete(0, tk.END)
-        entry_file.insert(0, file_path)
-
-    def compare_files():
+    def compare_files(simple_bom_mode: bool):
         """
         Compares two BOM files from GUI inputs and handles potential errors with message boxes.
 
@@ -143,7 +138,7 @@ def profile_startup():
 
             # Attempt BOM comparison
             try:
-                if not compare_bom(file_1, file_2, destination_file):
+                if not compare_bom(file_1, file_2, destination_file, simple_bom_mode=simple_bom_mode):
                     messagebox.showinfo("Same BOMs", "BOM files are identical")
                     return False
                 return True
@@ -153,7 +148,11 @@ def profile_startup():
                     "Permission Error", f"Please close compared files before trying again \n\n {str(e)}")
                 return False
             except ValueError as e:
-                messagebox.showerror("Data Error", f"Invalid BOM structure: \n \n {str(e)}")
+                if "Sheet 'BOM' not found in the workbook" in str(e):
+                    messagebox.showerror(
+                        "Sheet Error", "'BOM' sheet not present in Excel file: Light BOM compare is only available for BOM extracted from Creo and formatted with 'BOM refresh'")
+                else:
+                    messagebox.showerror("Data Error", f"Invalid BOM structure: \n \n {str(e)}")
                 return False
             except KeyError as e:
                 messagebox.showerror("Data Error", f"Missing required column: \n \n {str(e)}")
@@ -200,11 +199,21 @@ def profile_startup():
     entry_file = tk.Entry(root, width=50)
     entry_file.insert(0, default_path)
     entry_file.grid(row=2, column=1, padx=10, pady=10)
-    button_browse_file = tk.Button(root, text="Browse", command=browse_file)
+    button_browse_file = tk.Button(root, text="Browse", command=browse_destination)
     button_browse_file.grid(row=2, column=2, padx=10, pady=10)
 
-    button_compare = tk.Button(root, text="Compare", command=compare_files)
-    button_compare.grid(row=3, column=0, columnspan=3, padx=10, pady=10)
+    # Create a frame for buttons to center them
+    button_frame = tk.Frame(root)
+    button_frame.grid(row=3, column=0, columnspan=3, pady=10)
+
+    button_compare = tk.Button(button_frame, text="Compare Architecture",
+                               command=lambda: compare_files(simple_bom_mode=False))
+    button_compare.pack(side=tk.LEFT, padx=25)  # 25px padding on each side = 50px spacing
+
+    button_simple_compare = tk.Button(button_frame, text="Simple BOM Compare",
+                                      command=lambda: compare_files(simple_bom_mode=True))
+    button_simple_compare.pack(side=tk.LEFT, padx=25)
+
     button_quit = tk.Button(root, text="Quit", command=quit_app)
     button_quit.grid(row=4, column=0, columnspan=3, padx=10, pady=10)
 
