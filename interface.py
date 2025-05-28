@@ -144,8 +144,11 @@ def profile_startup():
                 return True
 
             except PermissionError as e:
-                messagebox.showerror(
-                    "Permission Error", f"Please close compared files before trying again \n\n {str(e)}")
+                if "Error: Cannot save file" in str(e):
+                    messagebox.showerror("Permission Error", str(e))
+                else:
+                    messagebox.showerror(
+                        "Permission Error", f"Please close compared files before trying again \n\n {str(e)}")
                 return False
             except ValueError as e:
                 if "Sheet 'BOM' not found in the workbook" in str(e):

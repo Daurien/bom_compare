@@ -504,11 +504,11 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
         if open_file:
             os.startfile(output_path)
     except PermissionError:
-        print(f"Error: Cannot save file - {output_path} is already open. Please close it and try again.")
-        return
+        raise PermissionError(
+            f"Error: Cannot save file - {output_path} is already open. Please close it and try again.")
 
 
-def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare_result.xlsx", open_result=True, simple_bom_mode=False):
+def compare_bom(path1: str, path2: str, output_path: str = None, open_result=True, simple_bom_mode=False):
     """
     Compare two Bill of Materials (BOM) Excel files.
 
@@ -519,6 +519,8 @@ def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getl
     Returns:
         None
     """
+    if output_path is None:
+        output_path = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare{"_architecture_" if not simple_bom_mode else ""}result.xlsx"
     if not simple_bom_mode:
         bom1, m1 = bom_excel_to_dictionary(path1)
         bom2, m2 = bom_excel_to_dictionary(path2)
@@ -538,6 +540,7 @@ def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getl
                     for element in diff.get('values_changed', [])]
 
     output = {}
+    print(item_changed)
 
     for item in item_added:
         output = append_to_dict(item, bom2, {'type': 'ADDED'}, output)
@@ -546,7 +549,7 @@ def compare_bom(path1: str, path2: str, output_path: str = f"C:\\Users\\{os.getl
         output = append_to_dict(item, bom1, {'type': 'REMOVED'}, output)
 
     for item in item_changed:
-        output = append_to_dict(item[0][:-1], bom1, {'type': 'CHANGED',
+        output = append_to_dict(item[0][:-1], bom2, {'type': 'CHANGED',
                                 'changed_value': item[0][-1], **item[1]}, output)
 
     table_output = dict_to_table(output, max_depth)
