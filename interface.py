@@ -174,6 +174,19 @@ def profile_startup():
     def quit_app():
         root.destroy()
 
+    def find_two_xlsx_files():
+        """
+        Looks in current directory for exactly two xlsx files.
+        Returns tuple of file paths if found, empty tuple otherwise.
+        """
+        print("Looking for two xlsx files in current directory...")
+        print(os.listdir())
+        xlsx_files = [f for f in os.listdir() if f.endswith('.xlsx')]
+        print(xlsx_files)
+        if len(xlsx_files) == 2:
+            return (os.path.abspath(xlsx_files[0]), os.path.abspath(xlsx_files[1]))
+        return ()
+
     root = tk.Tk()
     root.title("BOM Compare")
 
@@ -181,17 +194,55 @@ def profile_startup():
     label_file_1.grid(row=0, column=0, padx=10, pady=10)
     entry_file_1 = tk.Entry(root, width=50)
     entry_file_1.grid(row=0, column=1, padx=10, pady=10)
-    # entry_file_1.insert(0, "C:/OneDrive - Schneider Electric/Documents - MBT Plant - Gestion affaires - Métiers Group/Affaires/2025/706585418/GVXLIOCQ-QONE01250-00/Prod/03-PVZ, Schéma Elec, Specif et BOM/Spécifications/BOM QONE01250.xlsx")
-    button_browse_file_1 = tk.Button(root, text="Browse", command=browse_file_1)
-    button_browse_file_1.grid(row=0, column=2, padx=10, pady=10)
-
     label_file_2 = tk.Label(root, text="File 2:")
     label_file_2.grid(row=1, column=0, padx=10, pady=10)
     entry_file_2 = tk.Entry(root, width=50)
     entry_file_2.grid(row=1, column=1, padx=10, pady=10)
-    # entry_file_2.insert(0, "C:/OneDrive - Schneider Electric/Documents - MBT Plant - Gestion affaires - Métiers Group/Affaires/2025/706585418/GVXLIOCQ-QONE01250-00/Prod/03-PVZ, Schéma Elec, Specif et BOM/Spécifications/BOM QONE01250_REV02.xlsx")
-    button_browse_file_2 = tk.Button(root, text="Browse", command=browse_file_2)
-    button_browse_file_2.grid(row=1, column=2, padx=10, pady=10)
+
+    def browse_files(target_entry):
+        files = filedialog.askopenfilenames(filetypes=[("Excel files", "*.xlsx;*.xls")])
+        print(files)
+        if len(files) == 2:
+            target_entry.delete(0, tk.END)
+            target_entry.insert(0, files[0])
+            other_entry = entry_file_2 if target_entry == entry_file_1 else entry_file_1
+            other_entry.delete(0, tk.END)
+            other_entry.insert(0, files[1])
+            move_path_view()
+
+    button_browse_1 = tk.Button(root, text="Browse", command=lambda: browse_files(entry_file_1))
+    button_browse_1.grid(row=0, column=2, padx=10, pady=10)
+
+    button_browse_2 = tk.Button(root, text="Browse", command=lambda: browse_files(entry_file_2))
+    button_browse_2.grid(row=1, column=2, padx=10, pady=10)
+
+    def move_path_view():
+        """
+        Moves the view of the entry field to the end of the text.
+        This is useful when the text is too long to fit in the entry field.
+        """
+        entry_file_1.xview_moveto(1)
+        entry_file_2.xview_moveto(1)
+
+    def swap_paths():
+        path1 = entry_file_1.get()
+        path2 = entry_file_2.get()
+        entry_file_1.delete(0, tk.END)
+        entry_file_2.delete(0, tk.END)
+        entry_file_1.insert(0, path2)
+        entry_file_2.insert(0, path1)
+        move_path_view()  # Move view to end of text after swap
+
+    button_swap = tk.Button(root, text="⇅", command=swap_paths)
+    button_swap.grid(row=0, column=3, rowspan=2, padx=10, pady=10)
+
+    # Auto-populate entries if exactly two xlsx files found
+    xlsx_paths = find_two_xlsx_files()
+    if xlsx_paths:
+        entry_file_1.insert(0, xlsx_paths[0])
+        entry_file_2.insert(0, xlsx_paths[1])
+
+        move_path_view()  # Move view to end of text
 
     label_file = tk.Label(root, text="Destination File:")
     label_file.grid(row=2, column=0, padx=10, pady=10)
