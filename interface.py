@@ -57,6 +57,7 @@ def check_bom_comparison(file_1: str, file_2: str, destination_file: str) -> boo
             return False
         except KeyError as e:
             messagebox.showerror("Data Error", f"Missing required column: {str(e)}")
+            print(f"Missing required column error: {str(e)}")
             return False
         except InvalidFileException as e:
             messagebox.showerror("File Error", f"Invalid Excel file format: {str(e)}")
@@ -76,12 +77,12 @@ def check_bom_comparison(file_1: str, file_2: str, destination_file: str) -> boo
 def profile_startup():
     # Your existing code
     def browse_file_1():
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")])
+        file_path = filedialog.askopenfilename(filetypes=[("Excel or Text files", "*.xlsx;*.xls;*.txt")])
         entry_file_1.delete(0, tk.END)
         entry_file_1.insert(0, file_path)
 
     def browse_file_2():
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")])
+        file_path = filedialog.askopenfilename(filetypes=[("Excel or Text files", "*.xlsx;*.xls;*.txt")])
         entry_file_2.delete(0, tk.END)
         entry_file_2.insert(0, file_path)
 
@@ -107,13 +108,21 @@ def profile_startup():
                 messagebox.showwarning("Warning", "All fields must be filled.")
                 return False
 
-            # Validate file extensions
-            if not (file_1.endswith(".xlsx") or file_1.endswith(".xls")):
-                messagebox.showwarning("Warning", "File 1 must be a valid Excel file.")
-                return False
-            if not (file_2.endswith(".xlsx") or file_2.endswith(".xls")):
-                messagebox.showwarning("Warning", "File 2 must be a valid Excel file.")
-                return False
+            # Validate file extensions (allow .txt for input files)
+            if simple_bom_mode:
+                if not (file_1.endswith((".xlsx", ".xls", ".txt"))):
+                    messagebox.showwarning("Warning", "File 1 must be a valid Excel or TXT file.")
+                    return False
+                if not (file_2.endswith((".xlsx", ".xls", ".txt"))):
+                    messagebox.showwarning("Warning", "File 2 must be a valid Excel or TXT file.")
+                    return False
+            else:
+                if not (file_1.endswith((".xlsx", ".xls"))):
+                    messagebox.showwarning("Warning", "File 1 must be a valid Excel file for architecture comparison.")
+                    return False
+                if not (file_2.endswith((".xlsx", ".xls"))):
+                    messagebox.showwarning("Warning", "File 2 must be a valid Excel file for architecture comparison.")
+                    return False
             if not (destination_file.endswith(".xlsx") or destination_file.endswith(".xls")):
                 messagebox.showwarning("Warning", "Destination File must be a valid Excel file.")
                 return False
@@ -153,7 +162,7 @@ def profile_startup():
             except ValueError as e:
                 if "Sheet 'BOM' not found in the workbook" in str(e):
                     messagebox.showerror(
-                        "Sheet Error", "'BOM' sheet not present in Excel file: Light BOM compare is only available for BOM extracted from Creo and formatted with 'BOM refresh'")
+                        "Sheet Error", "'BOM' sheet not present in Excel file: Light BOM compare is only available for BOM extracted from Creo and formatted with 'BOM refresh' or BOM extracted from Oracle in a txt format")
                 else:
                     messagebox.showerror("Data Error", f"Invalid BOM structure: \n \n {str(e)}")
                 return False
@@ -182,10 +191,8 @@ def profile_startup():
         Looks in current directory for exactly two xlsx files.
         Returns tuple of file paths if found, empty tuple otherwise.
         """
-        print("Looking for two xlsx files in current directory...")
-        print(os.listdir())
         xlsx_files = [f for f in os.listdir() if f.endswith('.xlsx')]
-        print(xlsx_files)
+
         if len(xlsx_files) == 2:
             return (os.path.abspath(xlsx_files[0]), os.path.abspath(xlsx_files[1]))
         return ()
@@ -203,7 +210,7 @@ def profile_startup():
     entry_file_2.grid(row=1, column=1, padx=10, pady=10)
 
     def browse_files(target_entry):
-        files = filedialog.askopenfilenames(filetypes=[("Excel files", "*.xlsx;*.xls")])
+        files = filedialog.askopenfilenames(filetypes=[("Excel or Text files", "*.xlsx;*.xls;*.txt")])
         print(files)
         if len(files) == 2:
             target_entry.delete(0, tk.END)
@@ -211,6 +218,10 @@ def profile_startup():
             other_entry = entry_file_2 if target_entry == entry_file_1 else entry_file_1
             other_entry.delete(0, tk.END)
             other_entry.insert(0, files[1])
+            move_path_view()
+        else:
+            target_entry.delete(0, tk.END)
+            target_entry.insert(0, files[0])
             move_path_view()
 
     button_browse_1 = tk.Button(root, text="Browse", command=lambda: browse_files(entry_file_1))

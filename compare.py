@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 from pprint import pprint
 import re
@@ -19,6 +20,8 @@ import pandas as pd
 from openpyxl import load_workbook
 import warnings
 from numpy import ndarray
+import tkinter as tk
+from tkinter import font
 
 
 def read_bom_to_numpy(filePath: str) -> ndarray:
@@ -169,7 +172,7 @@ def bom_excel_to_dictionary(filePath: str):
 
 
 def light_bom_excel_to_dictionary(filePath: str):
-    """Compare two BOM from 'BOM' sheet of Creo extraceted Excel file and return a simplified BOM dictionary.
+    """Take BOM from 'BOM' sheet of Creo extraceted Excel file and return a simplified BOM dictionary.
 
     Args:
         filePath (str): file to read (from Creo only)
@@ -225,9 +228,107 @@ def light_bom_excel_to_dictionary(filePath: str):
     # Add 'Depth' column full of 1
     df['Depth'] = 1
 
+    df['SupplyType'] = ""
+
+    df['Revision'] = df['Revision'].apply(lambda x: f"{int(x):02d}" if x and str(x).isdigit() else x)
+
     light_bom = {}
 
     for _, row in df.iterrows():
+        item = row['Item name']
+        light_bom[item] = row.to_dict()
+
+    print(f"Quantity column type: {df['Quantity'].dtype}")
+
+    return light_bom
+
+
+def light_bom_oracle_to_dictionary(filePath: str):
+    """Take txt file BOM extraceted from Oracle and return a simplified BOM dictionary.
+
+    Args:
+        filePath (str): file to read (from Oracle only)
+
+    Returns:
+        dict: bom transformed as a dictionary with 'Item name' as keys and other attributes as values.
+    """
+    # Read the tab-separated file into a DataFrame
+    df = pd.read_csv(filePath, sep='\t')
+
+    # Create the simplified DataFrame
+    simplified_df = df[['Level', 'Supply Type', 'Item', 'Revision', 'Quantity', 'Description']].rename(
+        columns={
+            'Supply Type': 'SupplyType',
+            'Item': 'Item name',
+            'Revision': 'Revision',
+            'Quantity': 'Quantity',
+            'Description': 'Description'
+        })
+    # Clean whitespace from all string columns
+    simplified_df = simplified_df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+
+    # Convert Quantity column to float64
+    simplified_df['Quantity'] = simplified_df['Quantity'].astype('float64')
+
+    # Add 'Depth' column full of 1
+    simplified_df['Depth'] = 1
+    simplified_df['Revision'] = "XX"  # Default revision value
+    simplified_df['SupplyType'] = ""
+
+    # Extract revision from 'Item name' column and update Revision column
+
+    # Step 1: Create a buffer column with tuples (cleaned_name, revision)
+    buffer = simplified_df['Item name'].apply(lambda x: (
+        x[:-3], x[-2:]) if re.search(r'_\d{2}$', str(x)) else (x, simplified_df.loc[simplified_df['Item name'] == x, 'Revision'].iloc[0]))
+
+    # Step 2: Update the 'Revision' column from the buffer
+    simplified_df['Revision'] = buffer.apply(lambda x: f"{int(x[1]):02d}" if x[1] and str(x[1]).isdigit() else x[1])
+
+    # Step 3: Update the 'Item name' column from the buffer
+    simplified_df['Item name'] = buffer.apply(lambda x: x[0])
+
+    # Find parent for each row
+    parent_list = []
+    for idx, row in simplified_df.iterrows():
+        current_level = row['Level']
+        if current_level == 1:
+            parent = "main"
+        else:
+            parent = None
+            # Look upwards for the most recent row with Level == current_level - 1
+            for prev_idx in range(idx - 1, -1, -1):
+                if simplified_df.loc[prev_idx, 'Level'] == current_level - 1:
+                    parent = simplified_df.loc[prev_idx, 'Item name']
+                    break
+        parent_list.append(parent)
+
+    simplified_df['parent'] = parent_list
+
+    # Add category column based on the logic
+    category_list = []
+    for idx, row in simplified_df.iterrows():
+        current_item = str(row['Item name'])
+        parent_item = str(row['parent'])
+        # Check next row's Item name if it exists
+        if idx + 1 < len(simplified_df):
+            next_item_parent = str(simplified_df.loc[idx + 1, 'parent'])
+        else:
+            next_item_parent = None
+        if (next_item_parent == current_item) and (current_item != parent_item):
+            category = "Assembly"
+        else:
+            category = "Part"
+        category_list.append(category)
+
+    simplified_df['category'] = category_list
+
+    # Filter out rows where category is 'Assembly'
+    simplified_df = simplified_df[simplified_df['category'] != 'Assembly'].drop(
+        ['parent', 'category', 'Level'], axis=1)
+
+    light_bom = {}
+
+    for _, row in simplified_df.iterrows():
         item = row['Item name']
         light_bom[item] = row.to_dict()
 
@@ -396,6 +497,7 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
 
     # Convert DataFrame to rows and append to worksheet
     rows = dataframe_to_rows(result.drop("ModifyType", axis=1), index=False, header=True)
+    # rows = dataframe_to_rows(result, index=False, header=True)
     header = next(rows)
     ws.append(header)
 
@@ -417,7 +519,7 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
         ws.column_dimensions[chr(ord('A')+i)].alignment = Alignment(horizontal='left')
 
     # Define table to written data
-    tab = Table(displayName="Table1", ref=f'A1:{chr(ord('A')+result.shape[1]-2)}{result.shape[0]+1}')
+    tab = Table(displayName="Table1", ref=f'A1:{chr(ord('A')+nb_columns-1)}{result.shape[0]+1}')
 
     # Add a default style with striped rows and banded columns
     style = TableStyleInfo(name="TableStyleMedium2", showFirstColumn=False,
@@ -462,23 +564,58 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
     bom1 = "bom1"
     bom2 = "bom2"
 
+    # Create a persistent Tkinter root and font object at module level
+    _tk_root = tk.Tk()
+    _tk_root.withdraw()
+    _default_font = font.Font(root=_tk_root, family="Calibri", size=11)
+
+    def get_text_pixel_width(text, font_name="Calibri", font_size=11):
+        # Use the persistent font object if default params, else create a new one
+        if font_name == "Calibri" and font_size == 11:
+            return _default_font.measure(text)
+        else:
+            tk_font = font.Font(root=_tk_root, family=font_name, size=font_size)
+            return tk_font.measure(text)
+
     for index, row in result.iterrows():
         if {'type': 'ADDED'} in row['ModifyType']:
             # Green outline added items
             outilne_range(index+2, row['Level']+1, index+2, nb_columns, green_brush)
-            ws[f'{chr(ord('A')+max_depth+1)}{index+2}'].comment = Comment(f'Item {result.iloc[index]
-                                                                                  ["Item"]} was added in {bom2} (not present in {bom1})', "Automatically Generated")
+            comment_text = f'Item {result.iloc[index]["Item"]} was added in {bom2} (not present in {bom1})'
+            length_splited_lines = [get_text_pixel_width(line) for line in comment_text.splitlines()]
+            longest_line = max(length_splited_lines)
+            max_line_length = 500
+            nb_lines = sum([math.ceil((length)/max_line_length) for length in length_splited_lines])
+            width = min(max_line_length, longest_line+10)  # 7px per char, up to 500px
+            height = nb_lines * 18 + 8  # 20px per line, up to 500px
+            ws[f'{chr(ord("A")+max_depth+1)}{index+2}'].comment = Comment(
+                comment_text, "Automatically Generated", width=width, height=height)
 
         elif {'type': 'REMOVED'} in row['ModifyType']:
             # Red outline removed items
             outilne_range(index+2, row['Level']+1, index+2, nb_columns, red_brush)
-            ws[f'{chr(ord('A')+max_depth+1)}{index+2}'].comment = Comment(f'Item {result.iloc[index]
-                                                                                  ["Item"]} was removed in {bom2} (present in {bom1})', "Automatically Generated")
+            comment_text = f'Item {result.iloc[index]["Item"]} was removed in {bom2} (present in {bom1})'
+            length_splited_lines = [get_text_pixel_width(line) for line in comment_text.splitlines()]
+            longest_line = max(length_splited_lines)
+            max_line_length = 500
+            nb_lines = sum([math.ceil((length)/max_line_length) for length in length_splited_lines])
+            width = min(max_line_length, longest_line+10)  # 7px per char, up to 500px
+            height = nb_lines * 18 + 8  # 20px per line, up to 500px
+            ws[f'{chr(ord("A")+max_depth+1)}{index+2}'].comment = Comment(
+                comment_text, "Automatically Generated", width=width, height=height)
         else:
             for modif in row['ModifyType']:
                 if modif['type'] == 'CHANGED':
-                    ws[f'{chr(ord('A')+result.columns.get_loc(modif['changed_value']))}{index+2}'].comment = Comment(f'{modif['changed_value']
-                                                                                                                        } of item {result.iloc[index]["Item"]} has changed : {modif['old_value']} -> {modif['new_value']}', "Automatically Generated")
+                    comment_text = f"{modif['changed_value']} of item {result.iloc[index]['Item']} has changed :\n Old : {modif['old_value']}\n New: {modif['new_value']}"
+                    # Dynamically set width and height, max width 500px
+                    length_splited_lines = [get_text_pixel_width(line) for line in comment_text.splitlines()]
+                    longest_line = max(length_splited_lines)
+                    max_line_length = 500
+                    nb_lines = sum([math.ceil((length)/max_line_length) for length in length_splited_lines])
+                    width = min(max_line_length, longest_line+10)  # 7px per char, up to 500px
+                    height = nb_lines * 18 + 8  # 20px per line, up to 500px
+                    ws[f"{chr(ord('A')+result.columns.get_loc(modif['changed_value']))}{index+2}"].comment = Comment(
+                        comment_text, "Automatically Generated", width=width, height=height)
 
         # else:
         #     for modif in row['ModifyType']:
@@ -526,8 +663,16 @@ def compare_bom(path1: str, path2: str, output_path: str = None, open_result=Tru
         bom2, m2 = bom_excel_to_dictionary(path2)
         max_depth = max(m1, m2)
     else:
-        bom1 = light_bom_excel_to_dictionary(path1)
-        bom2 = light_bom_excel_to_dictionary(path2)
+        # Determine file type based on extension and use appropriate function
+        if path1.lower().endswith('.xlsx'):
+            bom1 = light_bom_excel_to_dictionary(path1)
+        elif path1.lower().endswith('.txt'):
+            bom1 = light_bom_oracle_to_dictionary(path1)
+
+        if path2.lower().endswith('.xlsx'):
+            bom2 = light_bom_excel_to_dictionary(path2)
+        elif path2.lower().endswith('.txt'):
+            bom2 = light_bom_oracle_to_dictionary(path2)
         max_depth = 1
 
     diff = DeepDiff(bom1, bom2, threshold_to_diff_deeper=0)
@@ -538,9 +683,13 @@ def compare_bom(path1: str, path2: str, output_path: str = None, open_result=Tru
                     for element in diff.get('dictionary_item_removed', [])]
     item_changed = [(re.findall(r'\[\'(.*?)\'\]', element.replace('[\'content\']', "").replace("root", "")), diff['values_changed'][element])
                     for element in diff.get('values_changed', [])]
-
-    output = {}
+    type_changes = [(re.findall(r'\[\'(.*?)\'\]', element.replace('[\'content\']', "").replace("root", "")), diff['type_changes'][element])
+                    for element in diff.get('type_changes', [])]
+    # Combine type_changes and item_changed
+    item_changed.extend((tc[0], {'new_value': tc[1]['new_value'], 'old_value': tc[1]['old_value']})
+                        for tc in type_changes)
     print(item_changed)
+    output = {}
 
     for item in item_added:
         output = append_to_dict(item, bom2, {'type': 'ADDED'}, output)
@@ -553,10 +702,28 @@ def compare_bom(path1: str, path2: str, output_path: str = None, open_result=Tru
                                 'changed_value': item[0][-1], **item[1]}, output)
 
     table_output = dict_to_table(output, max_depth)
+
     columns = ['Level', *[str(i) for i in range(1, max_depth+1)], 'Item', 'Description', 'Revision',
                'Quantity', 'SupplyType', 'ModifyType']
+    # Transform ModifyType into readable string
+
+    def transform_modify_type(modify_type_list):
+        messages = []
+        for item in modify_type_list:
+            if item['type'] == 'REMOVED':
+                messages.append('Removed')
+            elif item['type'] == 'ADDED':
+                messages.append('Added')
+            elif item['type'] == 'CHANGED':
+                messages.append(f"Changed {item['changed_value']}")
+            elif 'Item' in item['type']:
+                messages.append(item['type'])
+        return ', '.join(messages)
 
     output_df = DataFrame(table_output, columns=columns)
+
+    # Apply transformation to ModifyType column
+    output_df['Changed'] = output_df['ModifyType'].apply(transform_modify_type)
 
     if item_added or item_changed or item_removed:
         save_df_to_excel(output_df, max_depth, output_path, open_file=open_result)
@@ -576,40 +743,13 @@ def check_file(file_path):
 
 ##################################################### WORKING CODE #################################################
 
-# # Create the parser
-# parser = argparse.ArgumentParser(description="A script compare two BOM document with stardard format")
+##################################################### WORKING CODE #################################################
 
-# # Add arguments with help descriptions
-# parser.add_argument('--bom1', type=str, required=True, help='Path to the first bom')
-# parser.add_argument('--bom2', type=str, required=True, help='Path to the second bom')
+# file_1 = "C:/Users/SESA787052/Downloads/BOM QBOT21000 _rev02 1.xlsx"
+# # file_2 = "C:/Users/SESA787052/Downloads/fnd_gfm_204718568.txt"
+# file_2 = "./fnd_gfm_204718568.txt"
 
-# # Parse the arguments
-# args = parser.parse_args()
-
-# print(args.bom1)
-# print(args.bom2)
-
-# # Check the files
-# check_file(args.bom1)
-# check_file(args.bom2)
-
-# compare_bom(args.bom1, args.bom2)
-
-
-# filePath = 'C:/Users/SESA787052/Downloads/BOM QPBE44026-15 Design to Manufacturing1.xlsx'
-# filePath2 = 'C:/Users/SESA787052/Downloads/BOM QPBE44026-15 Design to Manufacturing2.xlsx'
-# compare_bom(filePath, filePath2)
-# print(get_file_type(filePath))
-# skip = find_table_origin_line_number(filePath, 'Import_Creo')-1
-# print(skip)
-# compare_bom('C:/Users/SESA787052/Documents/BOM_compare/BOM DESIGN QSMA11485_01.xlsx',
-#             "C:/Users/SESA787052/Documents/BOM_compare/BOM DESIGN QSMA11485_02.xlsx")
-# print(bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/QBVE94603.xlsx'))
-# bom, _ = bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/0M-3402007000.xlsx')
-# bom, _ = bom_excel_to_dictionary(filePath)
-# pprint.pprint(bom)
-# bom2, _ = bom_excel_to_dictionary('C:/Users/SESA787052/Downloads/QBVE94603.xlsx')
-
-# print(bom2['34413004'].keys())
-# print(bom2)
-# compare_bom(bom, bom2)
+# try:
+#     compare_bom(file_1, file_2, simple_bom_mode=True)
+# except PermissionError as e:
+#     print(str(e))
