@@ -22,6 +22,7 @@ import warnings
 from numpy import ndarray
 import tkinter as tk
 from tkinter import font
+import sys
 
 
 def read_bom_to_numpy(filePath: str) -> ndarray:
@@ -35,7 +36,7 @@ def read_bom_to_numpy(filePath: str) -> ndarray:
         np.ndarray: Array containing BOM data with selected columns
     """
     columns_to_find = ['Level', 'Item', 'Description', 'Quantity', 'Supply Type', 'Supplier_Type', 'SE_REVISION']
-    dtypes = {'Level': int, 'Item': str, 'Description': str, 'Quantity': int, 'Supply Type': str}
+    dtypes = {'Level': int, 'Item': str, 'Description': str, 'Quantity': float, 'Supply Type': str}
 
     # Determine file type
     workbook = load_workbook(filePath, read_only=True)
@@ -404,7 +405,7 @@ def append_row(row, content=None):
     return result
 
 
-def append_to_dict(keys: list, bom_content: dict, modify_type: str, initial_dict: dict = None):
+def build_nested_result_dict(keys: list, bom_content: dict, modify_type: str, initial_dict: dict = None):
     """_summary_
 
     Args:
@@ -489,7 +490,7 @@ def get_content(bom: dict, keys: list):
     return current_level
 
 
-def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_file=True):
+def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_file=True, bom1: str = "bom1", bom2: str = "bom2"):
 
     # Create a workbook and select the active worksheet
     wb = Workbook()
@@ -561,9 +562,6 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
     green_brush = Side(border_style="medium", color="2EB82E")
     red_brush = Side(border_style="medium", color="FF0000")
 
-    bom1 = "bom1"
-    bom2 = "bom2"
-
     # Create a persistent Tkinter root and font object at module level
     _tk_root = tk.Tk()
     _tk_root.withdraw()
@@ -581,7 +579,7 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
         if {'type': 'ADDED'} in row['ModifyType']:
             # Green outline added items
             outilne_range(index+2, row['Level']+1, index+2, nb_columns, green_brush)
-            comment_text = f'Item {result.iloc[index]["Item"]} was added in {bom2} (not present in {bom1})'
+            comment_text = f'Item {result.iloc[index]['Item name']} was added in {bom2} (not present in {bom1})'
             length_splited_lines = [get_text_pixel_width(line) for line in comment_text.splitlines()]
             longest_line = max(length_splited_lines)
             max_line_length = 500
@@ -594,7 +592,7 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
         elif {'type': 'REMOVED'} in row['ModifyType']:
             # Red outline removed items
             outilne_range(index+2, row['Level']+1, index+2, nb_columns, red_brush)
-            comment_text = f'Item {result.iloc[index]["Item"]} was removed in {bom2} (present in {bom1})'
+            comment_text = f'Item {result.iloc[index]['Item name']} was removed in {bom2} (present in {bom1})'
             length_splited_lines = [get_text_pixel_width(line) for line in comment_text.splitlines()]
             longest_line = max(length_splited_lines)
             max_line_length = 500
@@ -606,7 +604,7 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
         else:
             for modif in row['ModifyType']:
                 if modif['type'] == 'CHANGED':
-                    comment_text = f"{modif['changed_value']} of item {result.iloc[index]['Item']} has changed :\n Old : {modif['old_value']}\n New: {modif['new_value']}"
+                    comment_text = f"{modif['changed_value']} of item {result.iloc[index]['Item name']} has changed :\n Old : {modif['old_value']}\n New: {modif['new_value']}"
                     # Dynamically set width and height, max width 500px
                     length_splited_lines = [get_text_pixel_width(line) for line in comment_text.splitlines()]
                     longest_line = max(length_splited_lines)
@@ -617,8 +615,23 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
                     ws[f"{chr(ord('A')+result.columns.get_loc(modif['changed_value']))}{index+2}"].comment = Comment(
                         comment_text, "Automatically Generated", width=width, height=height)
 
-        # else:
-        #     for modif in row['ModifyType']:
+    # Adding groups :
+    if max_depth > 1:
+        # Get the levels from the result DataFrame
+        levels = result['Level'].to_list()
+
+        for i, lvl in enumerate(levels):
+            # Find the next index in levels that is lower than the current one
+            next_index = len(levels) - 1
+            for j in range(i + 1, len(levels)):
+                if levels[j] <= lvl:
+                    next_index = j - 1
+                    break
+
+            if next_index - i > 0:
+                ws.row_dimensions.group(i + 3, next_index + 2, hidden=False, outline_level=lvl)
+
+        ws.sheet_properties.outlinePr.summaryBelow = False
 
     # SETTING CONFIDENTIALITY LABEL TO GENERAL
     props = CustomPropertyList()
@@ -645,6 +658,56 @@ def save_df_to_excel(result: DataFrame, max_depth: int, output_path: str, open_f
             f"Error: Cannot save file - {output_path} is already open. Please close it and try again.")
 
 
+def handle_name_changes(item_added, item_removed, item_changed, bom1, bom2):
+
+    added = {}
+    # Create a dictionary to hold added items with their paths
+    for id, item in enumerate(item_added):
+        path = "/".join(item)
+        value = get_content(bom2, item)
+        value["path"] = path
+        if 'content' in value:
+            value = value.copy()
+            value.pop('content')
+        added[id] = value
+    removed = {}
+    for id, item in enumerate(item_removed):
+        path = "/".join(item)
+        value = get_content(bom1, item)
+        value["path"] = path
+        if 'content' in value:
+            value = value.copy()
+            value.pop('content')
+        removed[id] = value
+
+    # iterate over added and removed items to find name changes and other changes
+    # An item is considered changed if its description and path are the same, but other attributes like Item name, Revision, Quantity or SupplyType have changed
+    for add_id, add_value in added.items():
+        for rm_id, rm_value in removed.items():
+            if add_value['Description'] == rm_value['Description'] and add_value['path'].split('/')[:-1] == rm_value['path'].split('/')[:-1]:
+                item_path = add_value['path'].split('/')
+                if add_value['Item name'] != rm_value['Item name']:
+                    # If the item name has changed, we consider it a name change
+                    item_changed.append((item_path+['Item name'],
+                                         {'old_value': rm_value['Item name'], 'new_value': add_value['Item name']}))
+                if add_value['Revision'] != rm_value['Revision']:
+                    # If the revision has changed, we consider it a revision change
+                    item_changed.append((item_path+['Revision'],
+                                         {'old_value': rm_value['Revision'], 'new_value': add_value['Revision']}))
+                if add_value['Quantity'] != rm_value['Quantity']:
+                    # If the quantity has changed, we consider it a quantity change
+                    item_changed.append((item_path+['Quantity'],
+                                         {'old_value': rm_value['Quantity'], 'new_value': add_value['Quantity']}))
+                if add_value['SupplyType'] != rm_value['SupplyType']:
+                    # If the supply type has changed, we consider it a supply type change
+                    item_changed.append((item_path+['SupplyType'],
+                                         {'old_value': rm_value['SupplyType'], 'new_value': add_value['SupplyType']}))
+
+                # Remove the item from added and removed lists as it has been processed
+                item_added.remove(item_path)
+                item_removed.remove(item_path[:-1] + [rm_value['Item name']])
+
+
 def compare_bom(path1: str, path2: str, output_path: str = None, open_result=True, simple_bom_mode=False):
     """
     Compare two Bill of Materials (BOM) Excel files.
@@ -656,6 +719,7 @@ def compare_bom(path1: str, path2: str, output_path: str = None, open_result=Tru
     Returns:
         None
     """
+    print(f"Comparing BOM files:\n{path1}\n{path2}")
     if output_path is None:
         output_path = f"C:\\Users\\{os.getlogin()}\\Downloads\\compare{"_architecture_" if not simple_bom_mode else ""}result.xlsx"
     if not simple_bom_mode:
@@ -688,22 +752,24 @@ def compare_bom(path1: str, path2: str, output_path: str = None, open_result=Tru
     # Combine type_changes and item_changed
     item_changed.extend((tc[0], {'new_value': tc[1]['new_value'], 'old_value': tc[1]['old_value']})
                         for tc in type_changes)
-    print(item_changed)
+
+    handle_name_changes(item_added, item_removed, item_changed, bom1, bom2)
+
     output = {}
 
     for item in item_added:
-        output = append_to_dict(item, bom2, {'type': 'ADDED'}, output)
+        output = build_nested_result_dict(item, bom2, {'type': 'ADDED'}, output)
 
     for item in item_removed:
-        output = append_to_dict(item, bom1, {'type': 'REMOVED'}, output)
+        output = build_nested_result_dict(item, bom1, {'type': 'REMOVED'}, output)
 
     for item in item_changed:
-        output = append_to_dict(item[0][:-1], bom2, {'type': 'CHANGED',
-                                'changed_value': item[0][-1], **item[1]}, output)
+        output = build_nested_result_dict(item[0][:-1], bom2, {'type': 'CHANGED',
+                                                               'changed_value': item[0][-1], **item[1]}, output)
 
     table_output = dict_to_table(output, max_depth)
 
-    columns = ['Level', *[str(i) for i in range(1, max_depth+1)], 'Item', 'Description', 'Revision',
+    columns = ['Level', *[str(i) for i in range(1, max_depth+1)], 'Item name', 'Description', 'Revision',
                'Quantity', 'SupplyType', 'ModifyType']
     # Transform ModifyType into readable string
 
@@ -726,7 +792,9 @@ def compare_bom(path1: str, path2: str, output_path: str = None, open_result=Tru
     output_df['Changed'] = output_df['ModifyType'].apply(transform_modify_type)
 
     if item_added or item_changed or item_removed:
-        save_df_to_excel(output_df, max_depth, output_path, open_file=open_result)
+        file1 = os.path.splitext(os.path.basename(path1))[0]
+        file2 = os.path.splitext(os.path.basename(path2))[0]
+        save_df_to_excel(output_df, max_depth, output_path, open_file=open_result, bom1=file1, bom2=file2)
         return True
     else:
         return False
@@ -745,11 +813,8 @@ def check_file(file_path):
 
 ##################################################### WORKING CODE #################################################
 
-# file_1 = "C:/Users/SESA787052/Downloads/BOM QBOT21000 _rev02 1.xlsx"
-# # file_2 = "C:/Users/SESA787052/Downloads/fnd_gfm_204718568.txt"
+file_1 = "BOM QBOT21000 _rev03.xlsx"
+file_2 = "BOM QBOT21000 _rev04.xlsx"
 # file_2 = "./fnd_gfm_204718568.txt"
-
-# try:
-#     compare_bom(file_1, file_2, simple_bom_mode=True)
-# except PermissionError as e:
-#     print(str(e))
+with warnings.catch_warnings(action="ignore"):
+    compare_bom(file_1, file_2, simple_bom_mode=False)

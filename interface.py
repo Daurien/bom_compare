@@ -1,4 +1,5 @@
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from compare import compare_bom
@@ -185,13 +186,14 @@ def profile_startup():
 
     def quit_app():
         root.destroy()
+        sys.exit(0)
 
     def find_two_xlsx_files():
         """
         Looks in current directory for exactly two xlsx files.
         Returns tuple of file paths if found, empty tuple otherwise.
         """
-        xlsx_files = [f for f in os.listdir() if f.endswith('.xlsx')]
+        xlsx_files = [f for f in os.listdir() if f.endswith('.xlsx') and not f.startswith('~$')]
 
         if len(xlsx_files) == 2:
             return (os.path.abspath(xlsx_files[0]), os.path.abspath(xlsx_files[1]))
